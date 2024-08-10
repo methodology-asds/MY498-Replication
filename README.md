@@ -1,3 +1,5 @@
+## Replication Material ## 
+
 The `analysis` R Markdown file contains the code to replicate all results and visualisations used in the following capstone project: "Scandalous Effects: The Impact of Political Candidates on Party Identification. 
 
 The data sources used in this analysis are: 
