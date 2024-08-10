@@ -1,0 +1,2064 @@
+---
+title: "Analysis"
+output: html_document
+date: "2024-06-17"
+---
+
+### Pre-Analysis ###
+
+``` {r Load libraries}
+library(tidyverse)
+library(rdrobust)
+library(fastDummies)
+library(glmnet)
+library(survey)
+library(gridExtra)
+library(MLmetrics)
+library(e1071)
+library(caret)
+library(xgboost)
+library(randomForest)
+```
+
+``` {r Load datasets}
+### ESS Data ###
+ess <- read.csv('~/Documents/LSE/Thesis/ESS Data/ESS8e02_3/ESS8e02_3.csv')
+
+### Dynamob Data ###
+
+# Change working directory
+setwd("~/Documents/LSE/Thesis/Dynamiques de Mobilisation")
+
+# List all CSV files in the directory
+csv_files <- list.files(pattern = "\\.csv$", full.names = TRUE, recursive = FALSE)
+
+# Load all CSV files into a list
+csv_data_list <- lapply(csv_files, read.csv2)
+
+# Clean up file names
+file_names <- sub("^(.*?)(?= -).*", "\\1", csv_files, perl = TRUE)
+file_names <- sub(' ', '_', file_names, perl = TRUE)
+names(csv_data_list) <- basename(file_names)
+
+# Unlist the data frames and assign them to variables in the global environment
+list2env(csv_data_list, envir = .GlobalEnv)
+```
+
+### Descriptives ###
+
+``` {r Descriptives - Evolution of Identification with the right-wing party (data cleaning)}
+# Get sample proportion of right-wing identifiers (Wave 1)
+pid_desc_w1 <- Wave_1 %>%
+  select(c(UID_dn, dn01_PPPARTI, POIDS_dn01)) %>%
+  mutate(right_prop = ifelse(dn01_PPPARTI == 10, 1, 0))
+
+# Get population proportion
+pid_desc_w1 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn01, 
+                        data = pid_desc_w1)
+
+print(svymean(~right_prop, pid_desc_w1))
+      
+# Wave 2
+ pid_desc_w2 <- Wave_2 %>%
+  select(c(UID_dn, dn02_PPPARTI, POIDS_dn02)) %>%
+  mutate(right_prop = ifelse(dn02_PPPARTI == 10, 1, 0))
+
+pid_desc_w2 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn02, 
+                        data = pid_desc_w2)
+
+print(svymean(~right_prop, pid_desc_w2))
+
+# Wave 6
+pid_desc_w6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_PPPARTI, POIDS_dn06)) %>%
+  mutate(right_prop = ifelse(dn06_PPPARTI == 10, 1, 0))
+
+pid_desc_w6 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn06, 
+                        data = pid_desc_w6)
+
+print(svymean(~right_prop, pid_desc_w6))
+
+# Wave 10
+pid_desc_w10 <- Wave_10 %>%
+  select(c(UID_dn, dn10_PPPARTI, POIDS_dn10)) %>%
+  mutate(right_prop = ifelse(dn10_PPPARTI == 10, 1, 0))
+
+pid_desc_w10 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn10, 
+                        data = pid_desc_w10)
+
+print(svymean(~right_prop, pid_desc_w10))
+
+# Wave 14
+pid_desc_w14 <- Wave_14 %>%
+  select(c(UID_dn, ea16_I9A, POIDS_dn14)) %>%
+  mutate(right_prop = ifelse(ea16_I9A == 10, 1, 0)) %>%
+  filter(!is.na(POIDS_dn14))
+
+pid_desc_w14 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn14, 
+                        data = pid_desc_w14)
+
+print(svymean(~right_prop, pid_desc_w14))
+
+# Wave 16
+pid_desc_w16 <- Wave_16 %>%
+  select(c(UID_dn, dn16_PPPARTI, POIDS_dn16)) %>%
+  mutate(right_prop = ifelse(dn16_PPPARTI == 12, 1, 0))
+
+pid_desc_w16 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn16, 
+                        data = pid_desc_w16)
+
+print(svymean(~right_prop, pid_desc_w16))
+
+# Wave 18
+pid_desc_w18 <- Wave_18 %>%
+  select(c(UID_dn, dn18_PPPARTI, POIDS_dn18)) %>%
+  mutate(right_prop = ifelse(dn18_PPPARTI == 10, 1, 0)) %>%
+  filter(!is.na(POIDS_dn18))
+
+pid_desc_w18 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn18, 
+                        data = pid_desc_w18)
+
+print(svymean(~right_prop, pid_desc_w18))
+```
+
+``` {r Descriptives - Evolution of Identification with the right-wing party (plotting)}
+#Build dataset
+pid_desc <- data.frame(prop = c(0.20352, 0.1708, 0.19646, 0.18816, 0.15514, 0.12092, 0.024649),
+                       se = c(0.0172, 0.0161, 0.0187, 0.0185, 0.0102, 0.009, 0.004),
+                       date = c("09/13", "12/13", "06/14", "06/15", "12/16", "05/17", "12/17"), 
+                       treat = c(0, 0, 0, 0, 0, 1, 1))
+
+# Convert date to date format
+pid_desc$date <- as.Date(paste0("01/", pid_desc$date), format = "%d/%m/%y")
+
+# Calculate confidence intervals
+pid_desc <- pid_desc %>%
+  mutate(ci_lower = prop - 1.96 * se,
+         ci_upper = prop + 1.96 * se)
+
+# Plot 
+desc1 <- ggplot(pid_desc, aes(x = date, y = prop)) +
+  geom_line(color = "black") +
+  geom_point(aes(color = as.factor(treat))) +
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), alpha = 0.15, fill = "black") +
+  labs(title = "Proportion of LR identifiers through time",
+       x = "Date",
+       y = "Proportion", 
+       color = "") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) + 
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("0" = "black", "1" = "red"), labels = c("0" = "Pre-Scandal", "1" = "Post-Scandal"))
+```
+
+``` {r Descriptives - Evolution of Voting Intention for the right-wing party (data cleaning)}
+# Get sample voting intention for the right-wing party (Wave 1)
+vint_descr_w1 <- Wave_1 %>%
+  select(c(UID_dn, dn01_IVOTLEG, POIDS_dn01)) %>%
+  mutate(right_prop = ifelse(dn01_IVOTLEG == 9, 1, 0))
+
+# Convert to population voting intention
+vint_descr_w1 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn01, 
+                        data = vint_descr_w1)
+
+print(svymean(~right_prop, vint_descr_w1))
+
+# Wave 2
+vint_descr_w2 <- Wave_2 %>%
+  select(c(UID_dn, dn02_IVOTLEG, POIDS_dn02)) %>%
+  mutate(right_prop = ifelse(dn02_IVOTLEG == 9, 1, 0))
+
+vint_descr_w2 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn02, 
+                        data = vint_descr_w2)
+
+print(svymean(~right_prop, vint_descr_w2))
+
+# Wave 4
+vint_descr_w4 <- Wave_4 %>%
+  select(c(UID_dn, dn04_IVOTLEG, POIDS_dn04)) %>%
+  mutate(right_prop = ifelse(dn04_IVOTLEG == 9, 1, 0))
+
+vint_descr_w4 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn04, 
+                        data = vint_descr_w4)
+
+print(svymean(~right_prop, vint_descr_w4))
+
+# Wave 6
+vint_descr_w6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_IVOTLEG, POIDS_dn06)) %>%
+  mutate(right_prop = ifelse(dn06_IVOTLEG == 10, 1, 0))
+
+vint_descr_w6 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn06, 
+                        data = vint_descr_w6)
+
+print(svymean(~right_prop, vint_descr_w6))
+
+# Wave 7
+vint_descr_w7 <- Wave_7 %>%
+  select(c(UID_dn, dn07_IVOTLEG, POIDS_dn07)) %>%
+  mutate(right_prop = ifelse(dn07_IVOTLEG == 10, 1, 0))
+
+vint_descr_w7 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn07, 
+                        data = vint_descr_w7)
+
+print(svymean(~right_prop, vint_descr_w7))
+
+# Wave 9
+vint_descr_w9 <- Wave_9 %>%
+  select(c(UID_dn, dn09_IVOTLEG, POIDS_dn09)) %>%
+  mutate(right_prop = ifelse(dn09_IVOTLEG == 9, 1, 0))
+
+vint_descr_w9 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn09, 
+                        data = vint_descr_w9)
+
+print(svymean(~right_prop, vint_descr_w9))
+
+# Wave 12
+vint_descr_w12 <- Wave_12 %>%
+  select(c(UID_dn, dn12_IVOTLEG, POIDS_dn12)) %>%
+  mutate(right_prop = ifelse(dn12_IVOTLEG == 9, 1, 0))
+
+vint_descr_w12 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn12, 
+                        data = vint_descr_w12)
+
+print(svymean(~right_prop, vint_descr_w12))
+
+# Wave 13
+vint_descr_w13 <- Wave_13 %>%
+  select(c(UID_dn, dn13_IVOTLEG, POIDS_dn13)) %>%
+  mutate(right_prop = ifelse(dn13_IVOTLEG == 11, 1, 0)) %>%
+  filter(!is.na(POIDS_dn13))
+
+vint_descr_w13 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn13, 
+                        data = vint_descr_w13)
+
+print(svymean(~right_prop, vint_descr_w13))
+
+# Wave 14
+vint_descr_w16 <- Wave_16 %>%
+  select(c(UID_dn, dn16_IVOTLEG, POIDS_dn16)) %>%
+  mutate(right_prop = ifelse(dn16_IVOTLEG == 12, 1, 0))
+
+vint_descr_w16 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn16, 
+                        data = vint_descr_w16)
+
+print(svymean(~right_prop, vint_descr_w16))
+
+# Wave 18
+vint_descr_w18 <- Wave_18 %>%
+  select(c(UID_dn, dn18_IVOTLEG, POIDS_dn18)) %>%
+  mutate(right_prop = ifelse(dn18_IVOTLEG == 12, 1, 0)) %>%
+  filter(!is.na(POIDS_dn18))
+
+vint_descr_w18 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn18, 
+                        data = vint_descr_w18)
+
+print(svymean(~right_prop, vint_descr_w18))
+```
+
+``` {r Descriptives - Evolution of Voting Intention for the right-wing party (plotting)}
+#Build dataset
+vint_desc <- data.frame(prop = c(0.17899, 0.18131, 0.20604, 0.19249, 0.1793, 0.20523, 0.16513, 0.16362, 0.10126, 0.027849),
+                       se = c(0.0164, 0.0166, 0.019, 0.0185, 0.0171, 0.0201, 0.0196, 0.0097, 0.0084, 0.0047),
+                       date = c("09/13", "12/13", "04/14", "06/14", "12/14", "04/15", "12/15", "09/16", "05/17", "12/17"),
+                       treat = c(0,0,0,0,0,0,0,0,1,1))
+
+# Convert date to date format
+vint_desc$date <- as.Date(paste0("01/", vint_desc$date), format = "%d/%m/%y")
+
+# Calculate confidence intervals
+vint_desc <- vint_desc %>%
+  mutate(ci_lower = prop - 1.96 * se,
+         ci_upper = prop + 1.96 * se)
+
+# Plot the data
+desc2 <- ggplot(vint_desc, aes(x = date, y = prop)) +
+  geom_line(color = "black") +
+  geom_point(aes(color = as.factor(treat))) +
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), alpha = 0.2, fill = "black") +
+  labs(title = "Proportion of voting intention for LR through time",
+       x = "Date",
+       y = "Proportion", 
+       color = "") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("0" = "black", "1" = "red"), labels = c("0" = "Pre-Scandal", "1" = "Post-Scandal"))
+```
+
+``` {r Combine both plots}
+grid.arrange(desc2, desc1, nrow = 2)
+```
+
+``` {r Descriptives - Sympathy for Fillon (data cleaning)}
+# Wave 1
+
+# Select variables of interest
+symp_desc_w1 <- Wave_1 %>%
+  select(UID_dn, dn01_THERMFF, POIDS_dn01)
+
+# Recode out of scale values as NAs
+symp_desc_w1$dn01_THERMFF <- ifelse(symp_desc_w1$dn01_THERMFF > 10, NA, symp_desc_w1$dn01_THERMFF)
+
+# Assign population weights
+symp_desc_w1 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn01, 
+                        data = symp_desc_w1)
+
+# Get populatio mean sympathy for Fillon
+print(svymean(~dn01_THERMFF, symp_desc_w1, na.rm = TRUE))
+
+# Wave 6
+symp_desc_w6 <- Wave_6 %>%
+  select(UID_dn, dn06_THERMFF, POIDS_dn06)
+
+symp_desc_w6$dn06_THERMFF <- ifelse(symp_desc_w6$dn06_THERMFF > 10, NA, symp_desc_w6$dn06_THERMFF)
+
+symp_desc_w6 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn06, 
+                        data = symp_desc_w6)
+
+print(svymean(~dn06_THERMFF, symp_desc_w6, na.rm = TRUE))
+
+# Wave 13
+symp_desc_w13 <- Wave_13 %>%
+  select(UID_dn, dn13_THERMFF, POIDS_dn13) %>%
+  filter(!is.na(POIDS_dn13))
+
+symp_desc_w13$dn13_THERMFF <- ifelse(symp_desc_w13$dn13_THERMFF > 10, NA, symp_desc_w13$dn13_THERMFF)
+
+symp_desc_w13 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn13, 
+                        data = symp_desc_w13)
+
+print(svymean(~dn13_THERMFF, symp_desc_w13, na.rm = TRUE))
+
+# Wave 16
+symp_desc_w16 <- Wave_16 %>%
+  select(UID_dn, dn16_THERMFF, POIDS_dn16)
+
+symp_desc_w16$dn16_THERMFF <- ifelse(symp_desc_w16$dn16_THERMFF > 10, NA, symp_desc_w16$dn16_THERMFF)
+
+symp_desc_w16 <- svydesign(id = ~UID_dn,
+                        weights = ~POIDS_dn16, 
+                        data = symp_desc_w16)
+
+print(svymean(~dn16_THERMFF, symp_desc_w16, na.rm = TRUE))
+```
+
+``` {r Descriptives - Sympathy for Fillon (data cleaning for partisans)}
+# Wave 1
+# Select variables of interest and filter by partisans
+symp_desc_w1p <- Wave_1 %>%
+  filter(dn01_PPPARTI == 10) %>%
+  select(UID_dn, dn01_THERMFF, POIDS_dn01)
+
+# Recode out-scale values as NAs
+symp_desc_w1p$dn01_THERMFF <- ifelse(symp_desc_w1p$dn01_THERMFF > 10, NA, symp_desc_w1p$dn01_THERMFF)
+
+# Get average sympathy among identifiers
+print(mean(symp_desc_w1p$dn01_THERMFF, na.rm = TRUE))
+
+# Wave 6
+symp_desc_w6p <- Wave_6 %>%
+  filter(dn06_PPPARTI == 10) %>%
+  select(UID_dn, dn06_THERMFF, POIDS_dn06)
+
+symp_desc_w6p$dn01_THERMFF <- ifelse(symp_desc_w6p$dn06_THERMFF > 10, NA, symp_desc_w6p$dn06_THERMFF)
+
+print(mean(symp_desc_w6p$dn06_THERMFF, na.rm = TRUE))
+
+# Wave 13
+symp_desc_w13p <- Wave_13 %>%
+  filter(dn13_PPPARTI == 11) %>%
+  select(UID_dn, dn13_THERMFF, POIDS_dn13)
+
+symp_desc_w13p$dn13_THERMFF <- ifelse(symp_desc_w13p$dn13_THERMFF > 10, NA, symp_desc_w13p$dn13_THERMFF)
+
+print(mean(symp_desc_w13p$dn13_THERMFF, na.rm = TRUE))
+
+# Wave 16
+symp_desc_w16p <- Wave_16 %>%
+  filter(dn16_PPPARTI == 12) %>%
+  select(UID_dn, dn16_THERMFF, POIDS_dn16)
+
+symp_desc_w16p$dn16_THERMFF <- ifelse(symp_desc_w16p$dn16_THERMFF > 10, NA, symp_desc_w16p$dn16_THERMFF)
+
+print(mean(symp_desc_w16p$dn16_THERMFF, na.rm = TRUE))
+```
+
+``` {r Descriptives - Sympathy for Fillon (plotting)}
+# Build dataset
+symp_desc <- data.frame(gen_symp = c(3.8688, 3.9241, 3.4535, 2.5161),
+                        gen_se = c(0.117, 0.1137, 0.0624, 0.0767),
+                        pp_symp = c(5.886364, 5.562092, 5.108051, 5.875445), 
+                        date = c("09/13", "06/14", "09/16", "05/17"),
+                        treat = c(0, 0, 0, 1))
+
+# Convert date to date format
+symp_desc$date <- as.Date(paste0("01/", symp_desc$date), format = "%d/%m/%y")
+
+# Calculate confidence intervals
+symp_desc <- symp_desc %>%
+  mutate(ci_lower = gen_symp - 1.96 * gen_se,
+         ci_upper = gen_symp + 1.96 * gen_se)
+
+# Plot
+ggplot(symp_desc, aes(x = date)) +
+  # Mapping linetype to create a legend
+  geom_line(aes(y = gen_symp, linetype = "Entire Electorate"), color = "black") +
+  geom_point(aes(y = gen_symp, color = as.factor(treat))) +
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), alpha = 0.2, fill = "black") +
+  geom_line(aes(y = pp_symp, linetype = "LR Partisans"), color = "black") +
+  geom_point(aes(y = pp_symp, color = as.factor(treat))) +
+  labs(title = "Average Sympathy for Fillon between Partisans and the General Electorate",
+       x = "Date",
+       y = "Average Sympathy",
+       linetype = "",
+       color = "") +
+  theme_minimal() +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  theme(legend.position = "bottom") +
+  scale_linetype_manual(values = c("Entire Electorate" = "dashed", "LR Partisans" = "solid")) +
+  scale_color_manual(values = c("0" = "black", "1" = "red"), labels = c("0" = "Pre-Scandal", "1" = "Post-Scandal"))
+```
+
+### Partisan Stability ###
+
+``` {r Partisan Stability - Data Cleaning (w1)}
+#Remove non-citizens
+w1_st <- Wave_1 %>%
+  filter(ea13_A3 < 3)
+
+#Select partisan identity data
+w1_st <- w1_st %>%
+  select(UID_dn, dn01_PPPARTI)
+
+#Create a new variable - non-identifiers
+w1_st$dn01_PPPARTI <- ifelse(w1_st$dn01_PPPARTI > 13, 14, w1_st$dn01_PPPARTI)
+```
+
+``` {r Partisan Stability - Data Cleaning (w2)}
+#Remove non-citizens
+w2_st <- Wave_2 %>%
+  filter(ea13_A3 < 3)
+
+#Select partisan identity data
+w2_st <- w2_st %>%
+  select(UID_dn, dn02_PPPARTI)
+
+#Create a new variable - non-identifiers
+w2_st$dn02_PPPARTI <- ifelse(w2_st$dn02_PPPARTI > 13, 14, w2_st$dn02_PPPARTI)
+```
+
+``` {r Partisan Stability - Data Cleaning (w6)}
+#Remove non-citizens
+w6_st <- Wave_6 %>%
+  filter(ea14_A3_rec < 3)
+
+#Select partisan identity data
+w6_st <- w6_st %>%
+  select(UID_dn, dn06_PPPARTI)
+
+#Create a new variable - non-identifiers
+w6_st$dn06_PPPARTI <- ifelse(w6_st$dn06_PPPARTI > 13, 14, w6_st$dn06_PPPARTI)
+```
+
+``` {r Partisan Stability - Data Cleaning (w10)}
+#Remove non-citizens
+w10_st <- Wave_10 %>%
+  filter(ea15_A3_rec < 3)
+
+#Select partisan identity data
+w10_st <- w10_st %>%
+  select(UID_dn, dn10_PPPARTI)
+
+#Create a new variable - non-identifiers
+w10_st$dn10_PPPARTI <- ifelse(w10_st$dn10_PPPARTI > 13, 14, w10_st$dn10_PPPARTI)
+```
+
+``` {r Partisan Stability - Data Cleaning (w14)}
+#Remove non-citizens
+w14_st <- Wave_14 %>%
+  filter(ea16_A3_rec < 3)
+
+#Select partisan identity data
+w14_st <- w14_st %>%
+  select(UID_dn, ea16_I9A)
+
+#Create a new variable - non-identifiers
+w14_st$ea16_I9A <- ifelse(w14_st$ea16_I9A > 13, 14, w14_st$ea16_I9A)
+```
+
+``` {r Partisan stability - W1 to W2}
+# Join datasets
+st_12 <- left_join(w1_st, w2_st, by = "UID_dn")
+
+# Remove NAs
+st_12 <- na.omit(st_12)
+
+# Code stability status including independents
+st_12$stable <- ifelse(st_12$dn01_PPPARTI == st_12$dn02_PPPARTI, 1, 0)
+
+# Code stability status excluding independents
+st_12$stable2 <- ifelse(st_12$dn01_PPPARTI == st_12$dn02_PPPARTI | st_12$dn01_PPPARTI == 14 | st_12$dn02_PPPARTI == 14, 1, 0)
+
+# Get correlations
+prop.table(table(st_12$stable))
+prop.table(table(st_12$stable2))
+```
+
+``` {r Partisan stability - W2 to W6}
+# Join datasets
+st_26 <- left_join(w2_st, w6_st, by = "UID_dn")
+
+# Remove NAs
+st_26 <- na.omit(st_26)
+
+# Code stability status including independents
+st_26$stable <- ifelse(st_26$dn02_PPPARTI == st_26$dn06_PPPARTI, 1, 0)
+
+# Code stability status excluding independents
+st_26$stable2 <- ifelse(st_26$dn02_PPPARTI == st_26$dn06_PPPARTI | st_26$dn02_PPPARTI == 14 | st_26$dn06_PPPARTI == 14, 1, 0)
+
+# Get correlations
+prop.table(table(st_26$stable))
+prop.table(table(st_26$stable2))
+```
+
+``` {r Partisan stability - W6 to W10}
+# Join datasets
+st_610 <- left_join(w6_st, w10_st, by = "UID_dn")
+
+# Remove NAs
+st_610 <- na.omit(st_610)
+
+# Code stability including independents
+st_610$stable <- ifelse(st_610$dn06_PPPARTI == st_610$dn10_PPPARTI, 1, 0)
+
+# Code stability excluding independents
+st_610$stable2 <- ifelse(st_610$dn06_PPPARTI == st_610$dn10_PPPARTI | st_610$dn06_PPPARTI == 14 | st_610$dn10_PPPARTI == 14, 1, 0)
+
+# Get correlations
+prop.table(table(st_610$stable))
+prop.table(table(st_610$stable2))
+```
+
+``` {r Partisan stability - W10 to W14}
+# Join datasets
+st_1014 <- left_join(w10_st, w14_st, by = "UID_dn")
+
+# Remove NAs
+st_1014 <- na.omit(st_1014)
+
+# Code stability including independents
+st_1014$stable <- ifelse(st_1014$dn10_PPPARTI == st_1014$ea16_I9A, 1, 0)
+
+# Code stability excluding independents
+st_1014$stable2 <- ifelse(st_1014$dn10_PPPARTI == st_1014$ea16_I9A | st_1014$dn10_PPPARTI == 14 | st_1014$ea16_I9A == 14, 1, 0)
+
+# Get correlations
+prop.table(table(st_1014$stable))
+prop.table(table(st_1014$stable2))
+```
+
+### Regression Discontinuity ###
+
+```{r RDD-in-time: Data Cleaning}
+#Select data for France
+ess <- ess[ess$cntry == 'FR', ]
+
+#Get data collection range
+dates <- ess %>%
+  select(c(inwdde, inwmme, inwyye))
+
+# Create date variable
+dates <- paste(dates$inwdde, paste(dates$inwmme, dates$inwyye, sep = "-"), sep = "-")
+
+# Convert to date format 
+dates <- as.Date.character(dates, format = '%d-%m-%Y')
+
+# Get data collection range
+min(dates)
+max(dates)
+
+#Remove non-eligible to vote 
+ess <- ess %>%
+  filter(ctzcntr == 1) %>%
+  filter(agea > 17)
+```
+
+``` {r RDD-in-time: Descriptive}
+# Create a data frame counting the number of identifiers per party
+pid_ess <- data.frame(table(ess$prtclefr))
+
+# Change column names
+names(pid_ess) <- c("Party", "Count")
+
+# Map party groups
+pid_ess$Group <- c("Center", "FN" ,"Other", "Extreme-Left", "Extreme-Left", "Other Left", "Other Left", 
+                   "Other Left", "Other Right", "Other Right", "PS", "LR", "Center", "Greens", "Greens", "Other", "Non-Identifiers", "Non-Identifiers", "Non-Identifiers")
+
+# Get the number of identifiers per party groups
+pid_ess <- pid_ess %>%
+  group_by(Group) %>%
+  summarize(Count = sum(Count))
+
+# Get percentage
+pid_ess$Count <- pid_ess$Count/1912
+
+#Re-order levels
+pid_ess$Group <- factor(pid_ess$Group, levels = c("Extreme-Left", "Other Left", "PS", "Center", "LR", "Other Right", "FN", "Greens", "Other", "Non-Identifiers"))
+  
+#Plot
+ggplot(pid_ess, aes(x = Group, y = Count)) +
+  geom_col(col = 'black', fill = 'gray45') + 
+  labs(x = "Political Party", 
+       y = "Proportion", 
+       title = "Proportion of Identifiers for each Party") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+``` {r RDD-in-time: Build running variable}
+### Create a date variable ###
+ess$date <- paste(ess$inwdde, paste(ess$inwmme, ess$inwyye, sep = '-'), sep = '-')
+
+#Convert to date
+ess$date <- as.Date.character(ess$date, format = '%d-%m-%Y')
+
+#Drop other date variables
+ess <- ess %>%
+  select(-c(inwdde, inwmme, inwyye))
+
+# Create a treatment variable
+ess$treat <- ifelse(ess$date < as.Date("2017-01-26"), 0, 1)
+
+# Indicator of right-wing identification
+ess$right <- ifelse(ess$prtclefr == 12, 1, 0)
+
+#Rescale date variable according to distance from scandal date
+ess$period <- as.numeric(ess$date - as.Date("2017-01-26"))
+
+# Function to assign weekly time unit based on period status
+categorize_period <- function(period) {
+  if (period >= 0) {
+    return((period %/% 10))
+  } else {
+    return((period %/% 10))
+  }
+}
+
+# Apply the function to the periods list to create a new variable 'time'
+ess$time <- sapply(ess$period, categorize_period)
+```
+
+``` {r RDD-in-time: Balance tests}
+#By Gender
+summary(lm(ess$gndr ~ ess$treat))
+
+#By age
+table(ess$agea)
+ess$agea <- ifelse(ess$agea > 99, NA, ess$agea)
+summary(lm(ess$agea ~ ess$treat)) #Age is at 0.05
+
+#By education
+table(ess$edlvdfr)
+ess$edlvdfr <- ifelse(ess$edlvdfr > 26, NA, ess$edlvdfr)
+
+#Combine some categories
+ess$edlvdfr <- ifelse(ess$edlvdfr %in% c(1, 2, 3, 4, 5, 6, 7, 8), "Below Baccalaureate", ess$edlvdfr)
+ess$edlvdfr <- ifelse(ess$edlvdfr %in% c(9, 10, 11), "Baccalaureate", ess$edlvdfr)
+ess$edlvdfr <- ifelse(ess$edlvdfr %in% c(12, 13, 14, 15, 16, 17, 18), "Degree", ess$edlvdfr)
+ess$edlvdfr <- ifelse(ess$edlvdfr %in% c(19, 20, 21, 22, 23, 24, 25, 26), "Degree", ess$edlvdfr)
+
+#One hot encode 
+education_bt <- dummy_cols(ess, select_columns = "edlvdfr", remove_first_dummy = FALSE, remove_selected_columns = TRUE)
+
+#By education level
+summary(lm(education_bt$edlvdfr_Baccalaureate ~ education_bt$treat))
+summary(lm(education_bt$edlvdfr_Degree ~ education_bt$treat))
+summary(lm(education_bt$`edlvdfr_Below Baccalaureate` ~ education_bt$treat))
+
+#By Household income
+table(ess$hinctnta)
+ess$hinctnta <- ifelse(ess$hinctnta > 10, NA, ess$hinctnta)
+summary(lm(ess$hinctnta ~ ess$treat))
+```
+
+``` {r RDiT - LR (baseline)}
+set.seed(123)
+# Get proportion of LR identifiers pr period
+ess_agg <- ess %>%
+  group_by(time) %>%
+  summarise(right_week = mean(right))
+
+# Run model
+summary(rdrobust(ess_agg$right_week, ess_agg$time, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+``` {r RDD-in-time: Plot RDD}
+# Set pre-period and post-period 
+before_0 <- subset(ess_agg, time <= 0)
+after_0 <- subset(ess_agg, time >= 0)
+
+# Create the plot
+ggplot(ess_agg, aes(x = time, y = right_week)) +
+  geom_point(color = "gray60") +
+  geom_smooth(data = before_0, aes(x = time, y = right_week), method = "lm", color = "black", se = FALSE) + #Pre-scandal trend
+  geom_smooth(data = after_0, aes(x = time, y = right_week), method = "lm", color = "black", se = FALSE) + #Post-scandal trend
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  scale_x_continuous(breaks = seq(min(ess_agg$time), max(ess_agg$time), by = 2)) +
+  labs(title = "Discontinuity in Time for LR Identification",
+       x = "Time",
+       y = "Proportion of LR identifiers") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+``` {r RDD-in-time: FN (baseline)}
+set.seed(123)
+
+# Indicator of FN identification
+ess$fn <- ifelse(ess$prtclefr == 2, 1, 0)
+
+#Aggregate per period
+ess_agg_fn <- ess %>%
+  group_by(time) %>%
+  summarise(fn_week = mean(fn))
+
+#Run model
+summary(rdrobust(ess_agg_fn$fn_week, ess_agg_fn$time, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+``` {r RDD-in-time: No identification (baseline)}
+set.seed(123)
+# Indicator of no identification
+ess$ni <- ifelse(ess$prtclefr == 77 | ess$prtclefr == 88, 1, 0)
+
+# Aggregate
+ess_agg_ni <- ess %>%
+  group_by(time) %>%
+  summarise(ni_week = mean(ni))
+
+# Run model
+summary(rdrobust(ess_agg_ni$ni_week, ess_agg_ni$time, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+``` {r RDD-in-time: PS (baseline)}
+set.seed(123)
+# Indicator of PS identification
+ess$ps <- ifelse(ess$prtclefr == 11, 1, 0)
+
+# Aggregate
+ess_agg_ps <- ess %>%
+  group_by(time) %>%
+  summarise(ps_week = mean(ps))
+
+# Run model
+summary(rdrobust(ess_agg_ps$ps_week, ess_agg_ps$time, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+```{r RDD-in-time: LR (covariates)}
+set.seed(123)
+
+#Include the mena age per period as a covariate
+ess_agg_covs <- ess %>%
+  group_by(time) %>%
+  summarise(right_week = mean(right),
+            mean_age = mean(agea, na.rm = TRUE))
+
+# Combine the covariates into a data frame
+covariates <- data.frame(mean_age = ess_agg_covs$mean_age)
+
+# Run model
+summary(rdrobust(ess_agg_covs$right_week, ess_agg_covs$time, covs = covariates, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+```{r RDD-in-time: FN (covariates)}
+# Run model with covariates
+summary(rdrobust(ess_agg_fn$fn_week, ess_agg_fn$time, covs = covariates, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+```{r RDD-in-time: No identification (covariates)}
+# Run model with covariates
+summary(rdrobust(ess_agg_ni$ni_week, ess_agg_ni$time, covs = covariates, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+``` {r RDD-in-time: PS (covariates)}
+# Run model with covariates
+summary(rdrobust(ess_agg_ps$ps_week, ess_agg_ps$time, covs = covariates, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+``` {r Robustness Checks: Use a second degree polynomial}
+#LR
+summary(rdrobust(ess_agg$right_week, ess_agg$time, c = 0, p = 2, kernel = "uniform", all = TRUE))
+
+#FN
+summary(rdrobust(ess_agg_fn$fn_week, ess_agg_fn$time, c = 0, p = 2, kernel = "uniform", all = TRUE))
+
+#No Identification
+summary(rdrobust(ess_agg_ni$ni_week, ess_agg_ni$time, c = 0, p = 2, kernel = "uniform", all = TRUE))
+
+#PS
+summary(rdrobust(ess_agg_ps$ps_week, ess_agg_ps$time, c = 0, p = 2, kernel = "uniform", all = TRUE))
+```
+
+``` {r Robustness Checks: Use different kernels}
+### Triangular ###
+
+#LR
+summary(rdrobust(ess_agg_covs$right_week, ess_agg_covs$time, c = 0, p = 1, kernel = "triangular", all = TRUE))
+
+#FN
+summary(rdrobust(ess_agg_fn$fn_week, ess_agg_fn$time, c = 0, p = 1, kernel = "triangular", all = TRUE))
+
+#No Identification
+summary(rdrobust(ess_agg_ni$ni_week, ess_agg_ni$time, c = 0, p = 1, kernel = "triangular", all = TRUE))
+
+#PS
+summary(rdrobust(ess_agg_ps$ps_week, ess_agg_ps$time, c = 0, p = 1, kernel = "triangular", all = TRUE))
+
+### epanechnikov
+
+#LR
+summary(rdrobust(ess_agg_covs$right_week, ess_agg_covs$time, c = 0, p = 1, kernel = "epanechnikov", all = TRUE))
+
+#FN
+summary(rdrobust(ess_agg_fn$fn_week, ess_agg_fn$time, c = 0, p = 1, kernel = "epanechnikov", all = TRUE))
+
+#No Identification
+summary(rdrobust(ess_agg_ni$ni_week, ess_agg_ni$time, c = 0, p = 1, kernel = "epanechnikov", all = TRUE))
+
+#PS
+summary(rdrobust(ess_agg_ps$ps_week, ess_agg_ps$time, c = 0, p = 1, kernel = "epanechnikov", all = TRUE))
+```
+
+``` {r Robustness Checks: Use a different cut-off}
+# A month before the scandal
+ess_agg_rob <- ess_agg
+ess_agg_rob$time1 <- seq(-4, 8, by = 1)
+
+summary(rdrobust(ess_agg_rob$right_week, ess_agg_rob$time1, c = 0, p = 1, kernel = "uniform", all = TRUE))
+
+#A week after the scandal
+ess_agg_rob$time2 <- seq(-9, 3, by = 1)
+
+summary(rdrobust(ess_agg_rob$right_week, ess_agg_rob$time2, c = 0, p = 1, kernel = "uniform", all = TRUE))
+
+#Including the day of the scandal to treatment
+ess_rob <- ess
+
+ess_rob$treat <- ifelse(ess$date < as.Date("2017-01-25"), 0, 1)
+
+#Rescale date variable according to distance from scandal date
+ess_rob$period <- as.numeric(ess$date - as.Date("2017-01-25"))
+
+# Apply the function to the periods list to create a new variable 'time'
+ess_rob$time <- sapply(ess_rob$period, categorize_period)
+
+ess_agg_rob2 <- ess_rob %>%
+  group_by(time) %>%
+  summarise(right_week = mean(right))
+
+summary(rdrobust(ess_agg_rob2$right_week, ess_agg_rob2$time, c = 0, p = 1, kernel = "uniform", all = TRUE))
+```
+
+### Heterogeneity ###
+
+``` {r Clean data}
+# Remove non-citizens
+Wave_14 <- Wave_14 %>%
+  filter(ea16_A3_rec == 1 | ea16_A3_rec == 2)
+```
+
+``` {r Heterogeneity - Build outcome variable}
+# Select PID variable and ID for Wave 14
+Wave_14_outcome <- Wave_14 %>%
+  select(c(UID_dn, ea16_I9A))
+
+# For Wave 16
+Wave_16_outcome <- Wave_16 %>%
+  select(c(UID_dn, dn16_PPPARTI))
+
+# For Wave 18
+Wave_18_outcome <- Wave_18 %>%
+  select(c(UID_dn, dn18_PPPARTI))
+
+# # Merge datasets
+outcome <- merge(Wave_14_outcome, Wave_16_outcome, by = "UID_dn")
+outcome <- merge(outcome, Wave_18_outcome, by = "UID_dn")
+
+# Filter to only keep LR identifiers in Wave 14 (pre-scandal)
+outcome <- outcome %>%
+  filter(ea16_I9A == 10)
+
+# Code party switching
+outcome$y <- ifelse(outcome$dn16_PPPARTI == 12, 0, 1)
+
+# Clean up outcome dataset
+outcome <- outcome %>%
+  select(UID_dn, y)
+```
+
+``` {r Descriptives Plot - Realignment}
+# Copy outcome dataset
+het_desc <- outcome
+
+# Merge back with Wave 16 PID data
+het_desc <- merge(het_desc, Wave_16_outcome, by = "UID_dn")
+
+# Filter to only include switchers
+het_desc <- het_desc %>%
+  filter(y == 1)
+
+# Recode to include some other categories to non-identification
+het_desc$dn16_PPPARTI <- ifelse(het_desc$dn16_PPPARTI > 14, 14, het_desc$dn16_PPPARTI)
+
+ # Recode to include party names
+het_desc <- het_desc %>%
+  mutate(pid = case_when(
+    dn16_PPPARTI == 3 ~ "LFI",
+    dn16_PPPARTI == 6 ~ "PS", 
+    dn16_PPPARTI == 8 ~ "Greens",
+    dn16_PPPARTI == 9 ~ "En Marche !",
+    dn16_PPPARTI == 10 ~ "MoDem",
+    dn16_PPPARTI == 11 ~ "UDI", 
+    dn16_PPPARTI == 13 ~ "FN",
+    dn16_PPPARTI == 14 ~ "No ID"
+  ))
+
+# Get proportions of switching per party
+proportions <- het_desc %>%
+  group_by(pid) %>%
+  summarise(count = n()) %>%
+  mutate(proportion = count / sum(count))
+
+# Plot the data
+ggplot(proportions, aes(x = reorder(pid, proportion), y = proportion)) +
+  geom_bar(stat = "identity", col = 'black', fill = 'gray45') + 
+  labs(x = "Political Party", 
+       y = "Proportion", 
+       title = "Self-reported realignment of LR voters post-scandal") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+``` {r Heterogeneity - Add Predictors (Political Interest)}
+# Wave 1
+
+# Select political interest variable
+pol_int <- Wave_1 %>%
+  select(c(UID_dn, dn01_INTPOL))
+
+# Join to outcome dataset
+pol_int <- left_join(outcome, pol_int, by = "UID_dn")
+
+# Wave 2
+pol_int_W2 <- Wave_2 %>%
+  select(c(UID_dn, dn02_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W2, by = "UID_dn")
+
+# Wave 4
+pol_int_W4 <- Wave_4 %>%
+  select(c(UID_dn, dn04_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W4, by = "UID_dn")
+
+# Wave 5
+pol_int_W5 <- Wave_5 %>%
+  select(c(UID_dn, dn05_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W5, by = "UID_dn")
+
+# Wave 6
+pol_int_W6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W6, by = "UID_dn")
+
+# Wave 9
+pol_int_W9 <- Wave_9 %>%
+  select(c(UID_dn, dn09_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W9, by = "UID_dn")
+
+# Wave 10
+pol_int_W10 <- Wave_10 %>%
+  select(c(UID_dn, dn10_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W10, by = "UID_dn")
+
+# Wave 12
+pol_int_W12 <- Wave_12 %>%
+  select(c(UID_dn, dn12_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W12, by = "UID_dn")
+
+# Wave 13
+pol_int_w13 <- Wave_13 %>%
+  select(c(UID_dn, dn13_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_w13,  by = "UID_dn")
+
+# Wave 14
+pol_int_W14 <- Wave_14 %>%
+  select(c(UID_dn, dn14_INTPOL))
+
+pol_int <- left_join(pol_int, pol_int_W14, by = "UID_dn")
+
+# Calculate mean
+
+pol_int$pol_int_mean <- rowMeans(pol_int[3:ncol(pol_int)], na.rm = TRUE)
+
+# Invert scale
+
+pol_int$pol_int_mean <- 5 - pol_int$pol_int_mean
+
+#Add to main dataset
+
+outcome <- cbind(outcome, pol_int$pol_int_mean)
+```
+
+``` {r Heterogeneity - Add predictors (Opinion on Democracy)}
+# Wave 1
+fonc_dem <- Wave_1 %>%
+  select(c(UID_dn, dn01_FONCDEM))
+
+fonc_dem <- left_join(outcome, fonc_dem, by = "UID_dn")
+
+# Wave 2
+fonc_dem_W2 <- Wave_2 %>%
+  select(c(UID_dn, dn02_FONCDEM))
+
+fonc_dem <- left_join(fonc_dem, fonc_dem_W2, by = "UID_dn")
+
+# Wave 6
+fonc_dem_W6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_FONCDEM))
+
+fonc_dem <- left_join(fonc_dem, fonc_dem_W6, by = "UID_dn")
+
+# Wave 8
+fonc_dem_W8 <- Wave_8 %>%
+  select(c(UID_dn, dn08_FONCDEM))
+
+fonc_dem <- left_join(fonc_dem, fonc_dem_W8, by = "UID_dn")
+
+# Wave 10
+fonc_dem_W10 <- Wave_10 %>%
+  select(c(UID_dn, dn10_FONCDEM))
+
+fonc_dem <- left_join(fonc_dem, fonc_dem_W10, by = "UID_dn")
+
+# Wave 11
+fonc_dem_W11 <- Wave_11 %>%
+  select(c(UID_dn, dn11_FONCDEM))
+
+fonc_dem <- left_join(fonc_dem, fonc_dem_W11, by = "UID_dn")
+
+# Wave 13
+fonc_dem_W13 <- Wave_13 %>%
+  select(c(UID_dn, dn13_FONCDEM))
+
+fonc_dem <- left_join(fonc_dem, fonc_dem_W13, by = "UID_dn")
+
+# Wave 14
+fonc_dem_W14 <- Wave_14 %>%
+  select(c(UID_dn, dn14_FONCDEM))
+
+fonc_dem <- left_join(fonc_dem, fonc_dem_W14, by = "UID_dn")
+
+# Average
+fonc_dem$fonc_dem_mean <- rowMeans(fonc_dem[4:ncol(fonc_dem)], na.rm = TRUE)
+
+# Invert scale
+fonc_dem$fonc_dem_mean <- 5 - fonc_dem$fonc_dem_mean
+
+# Attach to main dataset
+outcome <- cbind(outcome, fonc_dem$fonc_dem_mean)
+```
+
+``` {r Heterogeneity - Add Predictors (Political Discussion)}
+# Wave 1
+pol_disc <- Wave_1 %>%
+  select(c(UID_dn, dn01_DISCUPOL))
+
+pol_disc <- left_join(outcome, pol_disc, by = "UID_dn")
+
+# Wave 2
+pol_disc_w2 <- Wave_2 %>%
+  select(c(UID_dn, dn02_DISCUPOL))
+
+pol_disc <- left_join(pol_disc, pol_disc_w2, by = "UID_dn")
+
+# Wave 6
+pol_disc_w6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_DISCUPOL))
+
+pol_disc <- left_join(pol_disc, pol_disc_w6, by = "UID_dn")
+
+# Wave 7
+pol_disc_w7 <- Wave_7 %>%
+  select(c(UID_dn, dn07_DISCUPOL))
+
+pol_disc <- left_join(pol_disc, pol_disc_w7, by = "UID_dn")
+
+# Wave 10
+pol_disc_w10 <- Wave_10 %>%
+  select(c(UID_dn, dn10_DISCUPOL))
+
+pol_disc <- left_join(pol_disc, pol_disc_w10, by = "UID_dn")
+
+# Wave 13
+pol_disc_w13 <- Wave_13 %>%
+  select(c(UID_dn, dn13_DISCUPOL))
+
+pol_disc <- left_join(pol_disc, pol_disc_w13, by = "UID_dn")
+
+# Wave 14
+pol_disc_w14 <- Wave_14 %>%
+  select(c(UID_dn, ea16_I11))
+
+pol_disc <- left_join(pol_disc, pol_disc_w14, by = "UID_dn")
+
+#Convert to binary 
+for (i in 5:ncol(pol_disc)) {
+  pol_disc[, i] <- ifelse(pol_disc[, i] > 3, 0, 1)
+}
+
+# Get mode 
+get_mode <- function(v) {
+  v <- v[!is.na(v)]  # Remove NAs
+  if (length(v) == 0) return(NA)  # If no values left, return NA
+  uniqv <- unique(v)
+  freq <- tabulate(match(v, uniqv))
+  max_freq <- max(freq)
+  modes <- uniqv[freq == max_freq]
+  if (length(modes) == 1) {
+    return(modes)
+  } else {
+    return(tail(v, 1))  # Return the last value if there's no single mode
+  }
+}
+
+pol_disc$pol_disc_mode <- apply(pol_disc[, 5:11], 1, get_mode)
+
+# Assign back to main dataset
+outcome <- cbind(outcome, pol_disc$pol_disc_mode)
+```
+
+``` {r Heterogeneity - Add Predictors (left-right scale)}
+# Wave 1
+lr_scale <- Wave_1 %>%
+  select(c(UID_dn, dn01_AXEGD))
+
+lr_scale <- left_join(outcome, lr_scale, by = "UID_dn")
+
+# Wave 2
+lr_scale_w2 <- Wave_2 %>%
+  select(c(UID_dn, ea13_I8))
+
+lr_scale <- left_join(lr_scale, lr_scale_w2, by = "UID_dn")
+
+# Recode some values as NAs
+lr_scale$ea13_I8 <- ifelse(lr_scale$ea13_I8 > 11, NA, lr_scale$ea13_I8)
+
+# Rescale
+lr_scale$ea13_I8 <- lr_scale$ea13_I8 - 1
+
+# Wave 4
+lr_scale_w4 <- Wave_4 %>%
+  select(c(UID_dn, dn04_AXEGD))
+
+lr_scale <- left_join(lr_scale, lr_scale_w4, by = "UID_dn")
+
+# Wave 6
+lr_scale_w6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_AXEGD))
+
+lr_scale <- left_join(lr_scale, lr_scale_w6, by = "UID_dn")
+
+# Wave 9
+lr_scale_w9 <- Wave_9 %>%
+  select(c(UID_dn, dn09_AXEGD))
+
+lr_scale <- left_join(lr_scale, lr_scale_w9, by = "UID_dn")
+
+# Wave 10
+lr_scale_w10 <- Wave_10 %>%
+  select(c(UID_dn, dn10_AXEGD))
+
+lr_scale <- left_join(lr_scale, lr_scale_w10, by = "UID_dn")
+
+# Recode NAs 
+lr_scale $dn10_AXEGD<- ifelse(lr_scale$dn10_AXEGD > 10, NA, lr_scale$dn10_AXEGD)
+
+# Wave 12
+lr_scale_w12 <- Wave_12 %>%
+  select(c(UID_dn, dn12_AXEGD))
+
+lr_scale <- left_join(lr_scale, lr_scale_w12, by = "UID_dn")
+
+# Wave 13
+lr_scale_w13 <- Wave_13 %>%
+  select(c(UID_dn, dn13_AXEGD))
+
+lr_scale <- left_join(lr_scale, lr_scale_w13, by = "UID_dn")
+
+# Recode NAs
+lr_scale$dn13_AXEGD <- ifelse(lr_scale$dn13_AXEGD > 10, NA, lr_scale$dn13_AXEGD)
+
+# Wave 14
+lr_scale_w14 <- Wave_14 %>%
+  select(c(UID_dn, dn14_AXEGD))
+
+lr_scale <- left_join(lr_scale, lr_scale_w14, by = "UID_dn")
+
+# Calculate average
+lr_scale$lr_scale_mean <- rowMeans(lr_scale[6:ncol(lr_scale)], na.rm = TRUE)
+
+#Attach back to main dataframe 
+outcome <- cbind(outcome, lr_scale$lr_scale_mean)
+```
+
+``` {r Heterogeneity - Add predictors (Sympathy Fillon)}
+# Wave 1
+sympathy_ff <- Wave_1 %>%
+  select(c(UID_dn, dn01_THERMFF))
+
+sympathy_ff <- left_join(outcome, sympathy_ff, by = "UID_dn")
+
+# Wave 6
+sympathy_ff_w6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_THERMFF))
+
+sympathy_ff <- left_join(sympathy_ff, sympathy_ff_w6, by = "UID_dn")
+
+# Wave 13
+sympathy_ff_w13 <- Wave_13 %>%
+  select(c(UID_dn, dn13_THERMFF))
+
+sympathy_ff <-  left_join(sympathy_ff, sympathy_ff_w13, by = "UID_dn")
+
+# Recode NAs
+sympathy_ff$dn13_THERMFF <- ifelse(sympathy_ff$dn13_THERMFF > 10, NA, sympathy_ff$dn13_THERMFF)
+
+#Take average
+sympathy_ff$sympathy_ff_mean <- rowMeans(sympathy_ff[7:ncol(sympathy_ff)], na.rm = TRUE)
+
+# Recode NAs to mean sympathy
+sympathy_ff$sympathy_ff_mean <- ifelse(is.na(sympathy_ff$sympathy_ff_mean), mean(sympathy_ff$sympathy_ff_mean, na.rm = TRUE), sympathy_ff$sympathy_ff_mean)
+
+# Reassign back to main dataframe 
+outcome <- cbind(outcome, sympathy_ff$sympathy_ff_mean)
+```
+
+``` {r Heterogeneity - Add predictors (Gender)}
+gender <- Wave_14 %>%
+  select(c(UID_dn, eayy_A1))
+
+outcome <- merge(outcome, gender, by = "UID_dn")
+
+# Convert to binary
+outcome$eayy_A1 <- outcome$eayy_A1 - 1
+```
+
+```{r Heterogeneity - Add predictors (Age)}
+age_group <- Wave_14 %>%
+  select(c(UID_dn, ea16_A2A_rec))
+  
+outcome <- merge(outcome, age_group, by = 'UID_dn')
+
+# Combine ranges to different age groups
+outcome <- outcome %>%
+  mutate(age_groups = case_when(
+    ea16_A2A_rec <= 5 ~ "Below30",
+    ea16_A2A_rec <= 11 ~ "Between30and60", 
+    TRUE ~ "Above60"
+  ))
+
+# One hot encode
+outcome <- dummy_cols(outcome, select_columns = "age_groups", remove_first_dummy = FALSE, remove_selected_columns = TRUE)
+
+# Remove original variable
+outcome <- outcome[, c(-9)]
+```
+
+``` {r Heterogeneity - Add predictors (Marital Status)}
+mar_stat <- Wave_14 %>%
+  select(c(UID_dn, ea16_A5))
+
+outcome <- merge(outcome, mar_stat, by = "UID_dn")
+
+# Convert to binary
+outcome <- outcome %>%
+  mutate(marital_stat = case_when(
+    ea16_A5 > 1 ~ 0,
+    TRUE ~ 1
+  ))
+
+# Remove original variable
+outcome <- outcome[, c(-12)]
+```
+
+``` {r Heterogeneity - Add Predictors (Socio-economic group)}
+socio_group <- Wave_14 %>%
+  select(c(UID_dn, eayy_PCS6))
+
+outcome <- merge(outcome, socio_group, by = "UID_dn")
+
+# Convert to binary
+outcome <- outcome %>%
+  mutate(socio_groups = case_when (
+    eayy_PCS6 == 1 ~ 0,
+    eayy_PCS6 == 2 ~ 0,
+    eayy_PCS6 == 3 ~ 1,
+    eayy_PCS6 == 4 ~ 1,
+    eayy_PCS6 == 5 ~ 1,
+    eayy_PCS6 == 6 ~ 0,
+    eayy_PCS6 > 6 ~ 0,
+    TRUE ~ NA
+  ))
+
+# Remove original variable
+outcome <- outcome[, c(-13)]
+```
+
+``` {r Heterogeneity - Add predictors (Socio-economic group (partner))}
+socio_group_sp <- Wave_14 %>%
+  select(c(UID_dn, ea16_PCS6CJT))
+
+outcome <- merge(outcome, socio_group_sp, by = "UID_dn")
+
+# Combine levels to categorical
+outcome <- outcome %>%
+  mutate(socio_groups_cjt = case_when (
+    ea16_PCS6CJT == 1 ~ "Low",
+    ea16_PCS6CJT == 2 ~ "Low",
+    ea16_PCS6CJT == 3 ~ "High",
+    ea16_PCS6CJT == 4 ~ "High",
+    ea16_PCS6CJT == 5 ~ "High",
+    ea16_PCS6CJT == 6 ~ "Low",
+    ea16_PCS6CJT > 6 ~ "Single",
+    TRUE ~ NA
+  ))
+
+# One hot encode
+outcome <- dummy_cols(outcome, select_columns = "socio_groups_cjt", remove_first_dummy = FALSE, remove_selected_columns = TRUE)
+
+# Remove original variable
+outcome <- outcome[, c(-14)]
+```
+
+``` {r Heterogeneity - Add predictors (Education)}
+educ <- Wave_14 %>%
+  select(UID_dn, eayy_B18C)
+
+outcome <- merge(outcome, educ, by = "UID_dn")
+
+# Convert to binary
+outcome <- outcome %>%
+  mutate(higheduc = ifelse(eayy_B18C > 3, 1, 0))
+
+# Remove original variable
+outcome <- outcome[, c(-17)]
+```
+
+``` {r Heterogeneity - Add predictors (Dependent children)}
+children <- Wave_14 %>%
+  select(c(UID_dn, ea16_C1JEU))
+
+outcome <- merge(outcome, children, by = "UID_dn")
+
+# Convert to binary
+outcome <- outcome %>%
+  mutate(children = case_when(
+    ea16_C1JEU == 9 ~ 0,
+    ea16_C1JEU == 1 ~ 0,
+    TRUE ~ 1
+  ))
+
+# Remove original variable
+outcome <- outcome[, c(-18)]
+```
+
+``` {r Heterogeneity - Add predictors (Socialisation with family)}
+family <- Wave_14 %>%
+  select(c(UID_dn, ea16_F6_rec))
+
+outcome <- merge(outcome, family, by = "UID_dn")
+
+# Convert to binary
+outcome$ea16_F6_rec <- ifelse(outcome$ea16_F6_rec > 2, 0, 1)
+```
+
+``` {r Heterogeneity - Add predictors (Socialisation with friends)}
+friends <- Wave_14 %>%
+  select(c(UID_dn, eayy_F1_rec))
+
+outcome <- merge(outcome, friends, by = "UID_dn")
+
+# Convert to binary
+outcome$eayy_F1_rec <- ifelse(outcome$eayy_F1_rec > 2, 0, 1)
+```
+
+``` {r Heterogeneity - Add predictors (Importance of religion)}
+religious <- Wave_14 %>%
+  select(c(UID_dn, ea16_H2))
+
+outcome <- merge(outcome, religious, by = "UID_dn")
+
+# Invert scale
+outcome$ea16_H2 <- 5 - outcome$ea16_H2
+```
+
+``` {r Heterogeneity - Add predictors (Intensity of Partisanship)}
+partisan_prox <- Wave_14 %>%
+  select(c(UID_dn, ea16_I12))
+
+outcome <- merge(outcome, partisan_prox, by = 'UID_dn')
+
+# Invert scale
+outcome$ea16_I12 <- 5 - outcome$ea16_I12
+```
+
+``` {r Heterogeneity - Add predictors (opinion on politician)}
+# Wave 1
+polcare <- Wave_1 %>%
+  select(c(UID_dn, dn01_POLCARE))
+
+polcare <- left_join(outcome, polcare, by = "UID_dn")
+
+# Wave 6
+polcare_w6 <- Wave_6 %>%
+  select(c(UID_dn, dn06_POLCARE))
+
+polcare <- left_join(polcare, polcare_w6, by = "UID_dn")
+
+# Wave 10
+polcare_w10 <- Wave_10 %>%
+  select(c(UID_dn, dn10_POLCARE))
+
+polcare <- left_join(polcare, polcare_w10, by = "UID_dn")
+
+# Wave 13
+polcare_w13 <- Wave_13 %>%
+  select(c(UID_dn, dn13_POLCARE))
+
+polcare <- left_join(polcare, polcare_w13, by = "UID_dn")
+
+# Recode some NAs
+polcare$dn13_POLCARE <- ifelse(polcare$dn13_POLCARE > 4, NA, polcare$dn13_POLCARE)
+polcare$dn06_POLCARE <- ifelse(polcare$dn06_POLCARE > 4, NA, polcare$dn06_POLCARE)
+
+# Average
+polcare$polcare_average <- rowMeans(polcare[23:(ncol(polcare)-1)], na.rm = TRUE)
+
+# Invert scale 
+polcare$polcare_average <- 5 - polcare$polcare_average
+
+# Recode average NAs
+polcare$polcare_average <- ifelse(is.na(polcare$polcare_average), mean(polcare$polcare_average, na.rm = TRUE), polcare$polcare_average)
+
+# Add back to main data frame 
+outcome <- cbind(outcome, polcare$polcare_average)
+```
+
+``` {r Heterogeneity - Test and Train}
+set.seed(123)
+
+#Rename columns
+names(outcome) <- c("ID", "y", "pol_int_mean", "fonc_dem_mean", "pol_disc_mode", "lr_scale_mean", "sympathy_ff_mean", "gender", "above60", "below30", "between30and60", "marital_stat", "socio_groups", "socio_groups_cjt_high", "socio_groups_cjt_low", "socio_groups_cjt_single", "higheduc", "children", "socialisation_fam", "socialisation_friends", "importance_religion", "partisan_prox", "polcare_average")
+
+#Separate between train and test
+test_id <- sample(length(outcome$ID), 65)
+Xtest <- outcome[test_id, 3:ncol(outcome)]
+ytest <- outcome[test_id, 2]
+
+Xtrain <- outcome[-test_id, 3:ncol(outcome)]
+ytrain <- outcome[-test_id, 2]
+```
+
+``` {r Run LASSO}
+set.seed(123)
+
+#Cross validation
+cv_lasso <- cv.glmnet(as.matrix(Xtrain), ytrain)
+
+#Run model
+lasso <- glmnet(as.matrix(Xtrain), ytrain, alpha = 1, lambda = cv_lasso$lambda.min)
+
+#Get performance on training set
+lasso_preds_train <- predict(lasso, as.matrix(Xtrain), type = 'response')
+lasso_preds_train <- ifelse(lasso_preds_train[, 1] > 0.5, 1, 0)
+table(lasso_preds_train, ytrain)
+Accuracy(lasso_preds_train, ytrain)
+F1_Score(ytrain, lasso_preds_train)
+
+
+#Get performance on test set
+lasso_preds <- predict(lasso, as.matrix(Xtest), type = 'response')
+lasso_preds <- ifelse(lasso_preds[, 1] > 0.5, 1, 0)
+table(lasso_preds, ytest)
+Accuracy(lasso_preds, ytest)
+F1_Score(ytest, lasso_preds)
+
+print(lasso$beta)
+```
+
+``` {r Run SVM}
+set.seed(123)
+
+# Set up cross-validation
+train_control <- trainControl(method = "cv", number = 5)
+
+# Set grid 
+tune_grid_svm <- expand.grid(C = 2^(-5:2),
+                         sigma = 2^(-15:3)
+                         )
+
+# Perform hyperparameter tuning
+svm_model <- train(
+  y = factor(ytrain), 
+  x = Xtrain,
+  method = "svmRadial",
+  trControl = train_control,
+  tuneGrid = tune_grid_svm
+)
+
+# Predictions on training data
+predictions_train_svm <- predict(svm_model, Xtrain)
+Accuracy(predictions_train_svm, ytrain)
+F1_Score(ytrain, predictions_train_svm)
+
+# Predictions on test data
+predictions_test_svm <- predict(svm_model, Xtest)
+Accuracy(predictions_test_svm, ytest)
+F1_Score(ytest, predictions_test_svm)
+```
+
+``` {r Create custom random forest to account for more hyperparamater search}
+# Custom Random Forest
+customRF <- list(type = "Classification",
+                 library = "randomForest",
+                 loop = NULL)
+
+# Set hyperparameters
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree", "nodesize", "maxnodes"),
+                                  class = rep("numeric", 4),
+                                  label = c("mtry", "ntree", "nodesize", "maxnodes"))
+
+# Set up grid search
+customRF$grid <- function(x, y, len = NULL, search = "grid") {
+  expand.grid(
+  mtry = c(2, 4, 6, 8, 10, 15),  # Example values for mtry
+  ntree = c(500, 1000, 2000),  # Number of trees
+  nodesize = c(1, 5, 10),  # Minimum size of terminal nodes
+  maxnodes = c(10, 15, 20))
+}
+
+# Set up fit
+customRF$fit <- function(x, y, wts, param, lev, last, classProbs, ...) {
+  randomForest(x, y, mtry = param$mtry, ntree = param$ntree,
+               nodesize = param$nodesize, maxnodes = param$maxnodes, ...)
+}
+
+# Set up predict
+customRF$predict <- function(modelFit, newdata, submodels = NULL) {
+  predict(modelFit, newdata)
+}
+
+# Set up probabilities
+customRF$prob <- function(modelFit, newdata, submodels = NULL) {
+  predict(modelFit, newdata, type = "prob")
+}
+
+customRF$sort <- function(x) x[order(x[, 1]),]
+
+customRF$levels <- function(x) x$classes
+```
+
+``` {r Run Random Forest}
+set.seed(123)
+
+
+# Define a grid of hyperparameters
+tune_grid_rf <- expand.grid(
+  mtry = c(2, 4, 6, 8, 10, 15),  # Example values for mtry
+  ntree = c(500, 1000, 2000),  # Number of trees
+  nodesize = c(1, 5, 10),  # Minimum size of terminal nodes
+  maxnodes = c(10, 15, 20)  # Maximum number of terminal nodes
+)
+
+
+# Train the Random Forest model
+rf_model <- train(
+  y = factor(ytrain), 
+  x = Xtrain,  # Replace your_data with your actual dataset
+  method = customRF,  # Custom Random Forest method
+  trControl = train_control,
+  tuneGrid = tune_grid_rf,
+)
+
+# Predict on training data
+predictions_train_rf <- predict(rf_model, Xtrain)
+Accuracy(predictions_train_rf, ytrain)
+F1_Score(ytrain, predictions_train_rf)
+
+# Predict test data
+predictions_test_rf <- predict(rf_model, Xtest)
+Accuracy(predictions_test_rf, ytest)
+F1_Score(ytest, predictions_test_rf)
+```
+
+``` {r Run XGBoost}
+set.seed(123)
+
+# Define grid
+tune_grid_boost <- expand.grid(
+  nrounds = c(100, 200, 300), 
+  max_depth = c(3, 6, 9),
+  eta = c(0.01, 0.1, 0.3),
+  gamma = c(0, 1, 3),  
+  colsample_bytree = c(0.5, 0.7, 1),  
+  min_child_weight = c(1, 3, 5),  
+  subsample = c(0.5, 0.7, 1)  
+)
+
+# Train the XGBoost model
+xgb_model <- train(
+  y = factor(ytrain), 
+  x = Xtrain,  
+  method = "xgbTree", 
+  trControl = train_control,
+  tuneGrid = tune_grid_boost
+)
+
+# Predict training data
+predictions_train_boost <- predict(xgb_model, Xtrain)
+Accuracy(predictions_train_boost, ytrain)
+F1_Score(ytrain, predictions_train_boost)
+
+# Predict test data
+predictions_test_boost <- predict(xgb_model, Xtest)
+Accuracy(predictions_test_boost, ytest)
+F1_Score(ytest, predictions_test_boost)
+```
+
+``` {r Heterogeneity - Build New Dataset without accounting for panel features}
+# Copy outcome and ID
+outcome_base <- outcome %>%
+  select(c(ID, y))
+
+#Add political interest W14
+outcome_base <- left_join(outcome_base, pol_int_W14, by = c("ID" = "UID_dn"))
+
+#Reverse scale
+outcome_base$dn14_INTPOL <- 5 - outcome_base$dn14_INTPOL
+
+#Add opinion on democracy (W14)
+outcome_base <- left_join(outcome_base, fonc_dem_W14, by = c("ID" = "UID_dn"))
+
+#Reverse scale
+outcome_base$dn14_FONCDEM <- 5 - outcome_base$dn14_FONCDEM
+
+#Add political discussion (W14)
+outcome_base <- left_join(outcome_base, pol_disc_w14, by = c("ID" = "UID_dn"))
+
+#Convert to binary
+outcome_base$ea16_I11 <- ifelse(outcome_base$ea16_I11 > 3, 1, 0)
+
+#Add left-right scale 
+outcome_base <- left_join(outcome_base, lr_scale_w14, by = c("ID" = "UID_dn"))
+
+#Add sympathy Fillon
+outcome_base <- left_join(outcome_base, sympathy_ff_w13, by = c("ID" = "UID_dn"))
+
+#Recode NAs
+outcome_base$dn13_THERMFF <- ifelse(outcome_base$dn13_THERMFF > 10, NA, outcome_base$dn13_THERMFF)
+
+#Mean impute NAs (7)
+outcome_base$dn13_THERMFF <- ifelse(is.na(outcome_base$dn13_THERMFF), mean(outcome_base$dn13_THERMFF, na.rm = TRUE), outcome_base$dn13_THERMFF)
+
+#Add gender
+outcome_base$gender <- outcome$gender
+
+#Add age groups
+outcome_base$below30 <- outcome$below30
+
+outcome_base$between30and60 <- outcome$between30and60
+
+outcome_base$above60 <- outcome$above60
+
+#Marital status
+outcome_base$marital_stat <- outcome$marital_stat
+
+#Socio Economic Group
+outcome_base$socio_groups <- outcome$socio_groups
+
+#Socio Economc Group (Spouse)
+outcome_base$socio_groups_cjt_high <- outcome$socio_groups_cjt_high
+
+outcome_base$socio_groups_cjt_low <- outcome$socio_groups_cjt_low
+
+outcome_base$socio_groups_cjt_single <- outcome$socio_groups_cjt_single
+
+#High Education
+outcome$higheduc -> outcome_base$higheduc
+
+#Children
+outcome$children -> outcome_base$children
+
+#Socialisation family
+outcome$socialisation_fam -> outcome_base$socialisation_fam
+
+#Socialisation friends
+outcome$socialisation_friends -> outcome_base$socialisation_friends
+
+#Importance of religion
+outcome$importance_religion -> outcome_base$importance_religion
+
+#Proximity partisanship
+outcome$partisan_prox -> outcome_base$partisan_prox
+
+#Opinion on politicians
+outcome_base <- left_join(outcome_base, polcare_w13, by = c("ID" = "UID_dn"))
+
+#Recode NAs
+outcome_base$dn13_POLCARE <- ifelse(outcome_base$dn13_POLCARE > 4, NA, outcome_base$dn13_POLCARE)
+
+#Invert scale
+outcome_base$dn13_POLCARE <- 5 - outcome_base$dn13_POLCARE
+
+#Mean impute NAs
+outcome_base$dn13_POLCARE <- ifelse(is.na(outcome_base$dn13_POLCARE), mean(outcome_base$dn13_POLCARE, na.rm = TRUE), outcome_base$dn13_POLCARE)
+```
+
+``` {r Heterogeneity - Test and Train}
+set.seed(123)
+
+#Separate between train and test
+test_id_base <- sample(length(outcome_base$ID), 65)
+Xtest_base <- outcome_base[test_id_base, 3:ncol(outcome_base)]
+ytest_base <- outcome_base[test_id_base, 2]
+
+Xtrain_base <- outcome_base[-test_id_base, 3:ncol(outcome_base)]
+ytrain_base <- outcome_base[-test_id_base, 2]
+```
+
+``` {r Run LASSO}
+set.seed(123)
+
+#Cross validation
+cv_lasso_base <- cv.glmnet(as.matrix(Xtrain_base), ytrain_base)
+
+#Run model
+lasso_base <- glmnet(as.matrix(Xtrain_base), ytrain_base, alpha = 1, lambda = cv_lasso$lambda.min)
+
+#Get performance on training set
+lasso_preds_train_base <- predict(lasso_base, as.matrix(Xtrain_base), type = 'response')
+lasso_preds_train_base <- ifelse(lasso_preds_train_base[, 1] > 0.5, 1, 0)
+table(lasso_preds_train_base, ytrain_base)
+Accuracy(lasso_preds_train_base, ytrain_base)
+F1_Score(ytrain_base, lasso_preds_train_base)
+
+
+#Get performance on test set
+lasso_preds_base <- predict(lasso_base, as.matrix(Xtest_base), type = 'response')
+lasso_preds_base <- ifelse(lasso_preds_base[, 1] > 0.5, 1, 0)
+table(lasso_preds_base, ytest_base)
+Accuracy(lasso_preds_base, ytest_base)
+F1_Score(ytest_base, lasso_preds_base)
+
+print(lasso_base$beta)
+```
+
+``` {r Run SVM}
+set.seed(123)
+
+# Set up grid
+tune_grid_svm_base <- expand.grid(C = 2^(-5:2),
+                         sigma = 2^(-15:3)
+                         )
+
+# Train model
+svm_model_base <- train(
+  y = factor(ytrain_base), 
+  x = Xtrain_base,
+  method = "svmRadial",
+  trControl = train_control,
+  tuneGrid = tune_grid_svm_base
+)
+
+# Prediction on training data
+predictions_train_svm_base <- predict(svm_model_base, Xtrain_base)
+Accuracy(predictions_train_svm_base, ytrain_base)
+F1_Score(ytrain_base, predictions_train_svm_base)
+
+# Prediction on test data
+predictions_test_svm_base <- predict(svm_model_base, Xtest_base)
+Accuracy(predictions_test_svm_base, ytest_base)
+F1_Score(ytest_base, predictions_test_svm_base)
+```
+
+``` {r Run Random Forest}
+set.seed(123)
+
+
+# Define grid
+tune_grid_rf_base <- expand.grid(
+  mtry = c(2, 4, 6, 8, 10, 15), 
+  ntree = c(500, 1000, 2000),
+  nodesize = c(1, 5, 10), 
+  maxnodes = c(10, 15, 20)
+)
+
+# Train the Random Forest model
+rf_model_base <- train(
+  y = factor(ytrain_base), 
+  x = Xtrain_base,
+  method = customRF,
+  trControl = train_control,
+  tuneGrid = tune_grid_rf_base,
+)
+
+# Predict training data
+predictions_train_rf_base <- predict(rf_model_base, Xtrain_base)
+Accuracy(predictions_train_rf_base, ytrain_base)
+F1_Score(ytrain_base, predictions_train_rf_base)
+
+# Predict test data
+predictions_test_rf_base <- predict(rf_model_base, Xtest_base)
+Accuracy(predictions_test_rf_base, ytest_base)
+F1_Score(ytest_base, predictions_test_rf_base)
+```
+
+``` {r Run XGBoost}
+set.seed(123)
+
+# Define grid
+tune_grid_boost_base <- expand.grid(
+  nrounds = c(100, 200, 300), 
+  max_depth = c(3, 6, 9), 
+  eta = c(0.01, 0.1, 0.3), 
+  gamma = c(0, 1, 3), 
+  colsample_bytree = c(0.5, 0.7, 1),  
+  min_child_weight = c(1, 3, 5),  
+  subsample = c(0.5, 0.7, 1)  
+)
+
+# Train the XGBoost model
+xgb_model_base <- train(
+  y = factor(ytrain_base), 
+  x = Xtrain_base,
+  method = "xgbTree",  
+  trControl = train_control,
+  tuneGrid = tune_grid_boost_base
+)
+
+
+# Predict training data
+predictions_train_boost_base <- predict(xgb_model_base, Xtrain_base)
+Accuracy(predictions_train_boost_base, ytrain_base)
+F1_Score(ytrain_base, predictions_train_boost_base)
+
+# Predict test data
+predictions_test_boost_base <- predict(xgb_model_base, Xtest_base)
+Accuracy(predictions_test_boost_base, ytest_base)
+F1_Score(ytest_base, predictions_test_boost_base)
+```
+
+``` {r Get feature importance for rf_model}
+# Create a dataframe of feature importance
+feature_importance <- as.data.frame(rf_model$finalModel$importance)
+
+# Convert row names to column
+feature_importance <- rownames_to_column(feature_importance, var = "Predictors")
+
+# Round to secon decimal
+feature_importance$MeanDecreaseGini <- round(feature_importance$MeanDecreaseGini, 2)
+
+# Reorder factors by decreasing Gini 
+feature_importance$Predictors <- factor(feature_importance$Predictors,
+                                        levels = feature_importance$Predictors[order(feature_importance$MeanDecreaseGini)])
+
+# Rename levels
+levels(feature_importance$Predictors) <- c("Below 30", "Low Socio-Economic Status (partner)", "Mode Political Discussion", "High Socialisation (family)", "Gender", "High Education", "High Socialisation (friends)", "Dependent Children", "High Socio-Economic Status (Partner)", "Single", "High Socio-Economic Status", "Partisan Proximity", "Above 60", "Between 30 and 60", "Average Politician Opinion", "Marital Status", "Importance of Religion", "Average Democracy Opinion", "Average Political Interest", "Average Fillon Sympathy", "Average Left-Right Position")
+
+# Plot
+ggplot(data = feature_importance, aes(y = Predictors, x = MeanDecreaseGini)) +
+  geom_col(col = 'black', fill = 'gray45') + 
+    labs(x = "Mean Decrease Gini", 
+         y = "", 
+         title = "Feature Importance") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+``` {r Run RF model with only the top 3 predictors}
+set.seed(123)
+
+tune_grid_sparse <- expand.grid(
+  mtry = c(1, 2, 3),
+  ntree = c(500, 1000, 2000), 
+  nodesize = c(1, 5, 10), 
+  maxnodes = c(10, 15, 20)
+)
+
+# Train the Random Forest model
+rf_model_sparse <- train(
+  y = factor(ytrain), 
+  x = Xtrain[, c(1, 4, 5)], 
+  method = customRF,
+  trControl = train_control,
+  tuneGrid = tune_grid_sparse,
+)
+
+# Predict training data
+predictions_train_rf_sparse <- predict(rf_model_sparse, Xtrain)
+Accuracy(predictions_train_rf_sparse, ytrain)
+F1_Score(ytrain, predictions_train_rf_sparse)
+
+# Predict test data
+predictions_test_rf_sparse <- predict(rf_model_sparse, Xtest)
+Accuracy(predictions_test_rf_sparse, ytest)
+F1_Score(ytest, predictions_test_rf_sparse)
+```
+
+``` {r Robustness Checks: Using a Different Outcome}
+#Removing Switching to Independent as dealignment
+outcome2 <- merge(Wave_14_outcome, Wave_16_outcome, by = "UID_dn")
+outcome2 <- merge(outcome2, Wave_18_outcome, by = "UID_dn")
+
+outcome2 <- outcome2 %>%
+  filter(ea16_I9A == 10)
+
+outcome2$y <- ifelse(outcome2$dn16_PPPARTI == 12 | outcome2$dn16_PPPARTI > 14, 0, 1)
+
+#Create new outcome test and train
+ytest2 <- outcome2$y[test_id]
+ytrain2 <- outcome2$y[-test_id]
+
+#Run new model
+set.seed(123)
+# Train the Random Forest model with extensive hyperparameter tuning
+rf_model2 <- train(
+  y = factor(ytrain2), 
+  x = Xtrain,  # Replace your_data with your actual dataset
+  method = customRF,  # Custom Random Forest method
+  trControl = train_control,
+  tuneGrid = tune_grid_rf,
+)
+
+predictions_train_rf2 <- predict(rf_model2, Xtrain)
+Accuracy(predictions_train_rf2, ytrain2)
+F1_Score(ytrain2, predictions_train_rf2)
+
+predictions_test_rf2 <- predict(rf_model2, Xtest)
+Accuracy(predictions_test_rf2, ytest2)
+F1_Score(ytest2, predictions_test_rf2)
+```
+
+``` {r Plot Feature Importance 1}
+feature_importance2 <- as.data.frame(rf_model2$finalModel$importance)
+
+feature_importance2 <- rownames_to_column(feature_importance2, var = "Predictors")
+
+feature_importance2$MeanDecreaseGini <- round(feature_importance2$MeanDecreaseGini, 2)
+
+feature_importance2$Predictors <- factor(feature_importance2$Predictors,
+                                        levels = feature_importance2$Predictors[order(feature_importance2$MeanDecreaseGini)])
+
+
+
+
+levels(feature_importance2$Predictors) <- c("Below 30", "Low Socio-Economic Status (partner)",  "Gender", "High Socialisation (friends)", "Mode Political Discussion", "Dependent Children", "Single", "High Socialisation (family)", "Above 60", "High Education", "Average Politician Opinion", "Between 30 and 60", "Partisan Proximity", "High Socio-Economic Status (Partner)", "Importance of Religion", "High Socio-Economic Status", "Average Democracy Opinion", "Marital Status", "Average Political Interest", "Average Fillon Sympathy", "Average Left-Right Position")
+
+ggplot(data = feature_importance2, aes(y = Predictors, x = MeanDecreaseGini)) +
+  geom_col(col = 'black', fill = 'gray45') + 
+    labs(x = "Mean Decrease Gini", 
+         y = "", 
+         title = "Feature Importance") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+``` {r Robustness Checks: Using another Different Outcome}
+#Removing Switching to Independent as dealignment
+outcome3 <- merge(Wave_14_outcome, Wave_16_outcome, by = "UID_dn")
+outcome3 <- merge(outcome3, Wave_18_outcome, by = "UID_dn")
+
+outcome3 <- outcome3 %>%
+  filter(ea16_I9A == 10)
+
+outcome3$y <- ifelse(outcome2$dn16_PPPARTI == 12 & outcome2$dn18_PPPARTI == 12 , 0, 1)
+
+#Create new outcome test and train
+ytest3 <- outcome3$y[test_id]
+ytrain3 <- outcome3$y[-test_id]
+
+#Run new model
+set.seed(123)
+# Train the Random Forest model with extensive hyperparameter tuning
+rf_model3 <- train(
+  y = factor(ytrain3), 
+  x = Xtrain,  # Replace your_data with your actual dataset
+  method = customRF,  # Custom Random Forest method
+  trControl = train_control,
+  tuneGrid = tune_grid_rf,
+)
+
+predictions_train_rf3 <- predict(rf_model3, Xtrain)
+Accuracy(predictions_train_rf3, ytrain3)
+F1_Score(ytrain3, predictions_train_rf3)
+
+predictions_test_rf3 <- predict(rf_model3, Xtest)
+Accuracy(predictions_test_rf3, ytest3)
+F1_Score(ytest3, predictions_test_rf3)
+```
+
+``` {r Robustness Checks: Feature Importance 2}
+feature_importance3 <- as.data.frame(rf_model3$finalModel$importance)
+
+feature_importance3 <- rownames_to_column(feature_importance3, var = "Predictors")
+
+feature_importance3$MeanDecreaseGini <- round(feature_importance3$MeanDecreaseGini, 2)
+
+feature_importance3$Predictors <- factor(feature_importance3$Predictors,
+                                        levels = feature_importance3$Predictors[order(feature_importance3$MeanDecreaseGini)])
+
+
+
+
+levels(feature_importance3$Predictors) <- c("Below 30", "Low Socio-Economic Status (partner)", "Single", "Mode Political Discussion", "Marital Status", "High Socialisation (family)", "Gender", "High Socio-Economic Status (Partner)", "Dependent Children", "High Socialisation (friends)", "High Education", "High Socio-Economic Status", "Above 60", "Between 30 and 60", "Average Politician Opinion", "Importance of Religion", "Partisan Proximity", "Average Democracy Opinion", "Average Political Interest", "Average Fillon Sympathy", "Average Left-Right Position")
+
+ggplot(data = feature_importance3, aes(y = Predictors, x = MeanDecreaseGini)) +
+  geom_col(col = 'black', fill = 'gray45') + 
+    labs(x = "Mean Decrease Gini", 
+         y = "", 
+         title = "Feature Importance") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
